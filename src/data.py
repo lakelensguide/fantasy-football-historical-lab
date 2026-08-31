@@ -47,7 +47,7 @@ def aggregate_season(weekly: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"Required columns missing from nflverse data: {missing}")
 
     numeric = weekly.select_dtypes(include="number").columns.tolist()
-    exclude = {"season", "week"}
+    exclude = {"season", "week", "passing_cpoe"}
     sum_cols = [c for c in numeric if c not in exclude]
 
     grouped = weekly.groupby(id_cols, dropna=False)
@@ -58,6 +58,20 @@ def aggregate_season(weekly: pd.DataFrame) -> pd.DataFrame:
     else:
         games = grouped.size().rename("games").reset_index()
     season = season.merge(games, on=id_cols, how="left")
+
+    # CPOE is a rate, so aggregate it by attempts rather than summing weekly values.
+    if {"passing_cpoe", "attempts"}.issubset(weekly.columns):
+        cpoe = weekly[id_cols + ["passing_cpoe", "attempts"]].copy()
+        cpoe["_weighted_cpoe"] = (
+            pd.to_numeric(cpoe["passing_cpoe"], errors="coerce")
+            * pd.to_numeric(cpoe["attempts"], errors="coerce")
+        )
+        agg = cpoe.groupby(id_cols, dropna=False).agg(
+            _weighted_cpoe=("_weighted_cpoe", "sum"),
+            _cpoe_attempts=("attempts", "sum"),
+        ).reset_index()
+        agg["passing_cpoe"] = _safe_ratio(agg["_weighted_cpoe"], agg["_cpoe_attempts"])
+        season = season.merge(agg[id_cols + ["passing_cpoe"]], on=id_cols, how="left")
 
     if "team" in weekly.columns:
         w = weekly.copy()
@@ -70,19 +84,29 @@ def aggregate_season(weekly: pd.DataFrame) -> pd.DataFrame:
         )
         season = season.merge(last_team, on=id_cols, how="left")
 
+        # Build denominators from the actual team-weeks associated with each player.
+        # This avoids assigning an entire traded player's season to only his final team.
+        player_team_weeks = w[id_cols + ["week", "team"]].drop_duplicates()
         for metric, out_name in [
             ("targets", "team_targets"),
             ("carries", "team_carries"),
             ("receiving_air_yards", "team_receiving_air_yards"),
         ]:
             if metric in w.columns:
-                team_totals = (
-                    w.groupby(["season", "team"], dropna=False)[metric]
+                team_week = (
+                    w.groupby(["season", "week", "team"], dropna=False)[metric]
                     .sum(min_count=1)
                     .rename(out_name)
                     .reset_index()
                 )
-                season = season.merge(team_totals, on=["season", "team"], how="left")
+                player_den = (
+                    player_team_weeks
+                    .merge(team_week, on=["season", "week", "team"], how="left")
+                    .groupby(id_cols, dropna=False)[out_name]
+                    .sum(min_count=1)
+                    .reset_index()
+                )
+                season = season.merge(player_den, on=id_cols, how="left")
 
     if {"targets", "team_targets"}.issubset(season.columns):
         season["target_share"] = _safe_ratio(season["targets"], season["team_targets"])
