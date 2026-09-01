@@ -18,10 +18,12 @@ NGS_URL = (
 SEASONS = list(range(2016, 2026))
 CORE_POSITIONS = ["QB", "RB", "WR", "TE"]
 
+
 def _download_parquet(url: str) -> pd.DataFrame:
     r = requests.get(url, timeout=90)
     r.raise_for_status()
     return pd.read_parquet(BytesIO(r.content))
+
 
 @st.cache_data(show_spinner="Loading historical nflverse player data…", ttl=86400)
 def load_weekly() -> pd.DataFrame:
@@ -36,9 +38,11 @@ def load_weekly() -> pd.DataFrame:
         df["team"] = df["recent_team"]
     return df
 
+
 def _safe_ratio(num: pd.Series, den: pd.Series) -> pd.Series:
     out = pd.to_numeric(num, errors="coerce") / pd.to_numeric(den, errors="coerce")
     return out.replace([np.inf, -np.inf], np.nan)
+
 
 def aggregate_season(weekly: pd.DataFrame) -> pd.DataFrame:
     id_cols = ["player_id", "player_display_name", "position", "season"]
@@ -60,15 +64,16 @@ def aggregate_season(weekly: pd.DataFrame) -> pd.DataFrame:
     season = season.merge(games, on=id_cols, how="left")
 
     # CPOE is a rate, so aggregate it by attempts rather than summing weekly values.
+    # Only attempts from rows with a reported CPOE belong in the denominator.
     if {"passing_cpoe", "attempts"}.issubset(weekly.columns):
         cpoe = weekly[id_cols + ["passing_cpoe", "attempts"]].copy()
-        cpoe["_weighted_cpoe"] = (
-            pd.to_numeric(cpoe["passing_cpoe"], errors="coerce")
-            * pd.to_numeric(cpoe["attempts"], errors="coerce")
-        )
+        cpoe_value = pd.to_numeric(cpoe["passing_cpoe"], errors="coerce")
+        attempts = pd.to_numeric(cpoe["attempts"], errors="coerce")
+        cpoe["_weighted_cpoe"] = cpoe_value * attempts
+        cpoe["_cpoe_attempts"] = attempts.where(cpoe_value.notna())
         agg = cpoe.groupby(id_cols, dropna=False).agg(
-            _weighted_cpoe=("_weighted_cpoe", "sum"),
-            _cpoe_attempts=("attempts", "sum"),
+            _weighted_cpoe=("_weighted_cpoe", lambda s: s.sum(min_count=1)),
+            _cpoe_attempts=("_cpoe_attempts", lambda s: s.sum(min_count=1)),
         ).reset_index()
         agg["passing_cpoe"] = _safe_ratio(agg["_weighted_cpoe"], agg["_cpoe_attempts"])
         season = season.merge(agg[id_cols + ["passing_cpoe"]], on=id_cols, how="left")
@@ -129,6 +134,7 @@ def aggregate_season(weekly: pd.DataFrame) -> pd.DataFrame:
 
     return season
 
+
 @st.cache_data(show_spinner="Loading Next Gen Stats enrichment…", ttl=86400)
 def load_ngs_optional() -> pd.DataFrame:
     frames = []
@@ -168,6 +174,7 @@ def load_ngs_optional() -> pd.DataFrame:
     for x in frames[1:]:
         out = out.merge(x, on=["season", "player_gsis_id"], how="outer")
     return out
+
 
 def enrich_with_ngs(season: pd.DataFrame) -> pd.DataFrame:
     ngs = load_ngs_optional()
