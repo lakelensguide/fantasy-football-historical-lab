@@ -30,6 +30,16 @@ streamlit run streamlit_app.py
 
 No API keys or secrets are required for the public nflverse data used by this version.
 
+## Tests
+
+Core scoring, threshold math, traded-player usage shares, and season-level CPOE aggregation are covered by regression tests.
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+GitHub Actions runs the same tests plus a source compilation check on pushes to `main` and pull requests.
+
 ## Streamlit Community Cloud
 
 The deployed app should use:
