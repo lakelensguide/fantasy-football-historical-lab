@@ -123,6 +123,8 @@ def aggregate_season(weekly: pd.DataFrame) -> pd.DataFrame:
         )
     if {"carries", "targets"}.issubset(season.columns):
         season["opportunities"] = season["carries"].fillna(0) + season["targets"].fillna(0)
+    if {"rushing_yards", "receiving_yards"}.issubset(season.columns):
+        season["total_yards"] = season["rushing_yards"].fillna(0) + season["receiving_yards"].fillna(0)
     if {"receiving_yards", "targets"}.issubset(season.columns):
         season["yards_per_target"] = _safe_ratio(season["receiving_yards"], season["targets"])
     if {"receptions", "targets"}.issubset(season.columns):
