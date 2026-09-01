@@ -16,6 +16,7 @@ LABELS = {
     "carries": "Carries",
     "rushing_yards": "Rushing yards",
     "rushing_tds": "Rushing TDs",
+    "total_yards": "Total yards",
     "carry_share": "Carry share",
     "opportunities": "Carries + targets",
     "yards_per_carry": "Yards / carry",
@@ -40,7 +41,7 @@ POSITION_CANDIDATES = {
         "rushing_tds",
     ],
     "RB": [
-        "opportunities", "carries", "targets", "carry_share", "target_share",
+        "opportunities", "total_yards", "carries", "targets", "carry_share", "target_share",
         "rushing_yards", "receiving_yards", "rushing_tds", "receiving_tds",
         "receptions", "yards_per_carry", "yards_per_target",
     ],
