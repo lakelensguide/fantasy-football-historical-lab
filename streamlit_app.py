@@ -5,12 +5,37 @@ import plotly.express as px
 import streamlit as st
 
 from src.analysis import LABELS, available_metrics, importance_table, rank_frame, threshold_summary
+from src.betting import (
+    consensus_for_threshold,
+    load_2026_season_player_props,
+    load_nfl_player_catalog,
+    metric_supported,
+)
 from src.data import CORE_POSITIONS, aggregate_season, enrich_with_ngs, load_weekly
 from src.scoring import SCORING_PRESETS, fantasy_points
 
 st.set_page_config(page_title="Fantasy Football Historical Lab", layout="wide")
 st.title("Fantasy Football Historical Lab")
-st.caption("2016–2025 · Thresholds, positional drivers, predictive signals, and player history")
+st.caption("2016–2025 historical analysis · 2026 season-market overlay")
+
+
+@st.cache_data(show_spinner=False, ttl=900)
+def _cached_2026_props(api_key: str | None):
+    return load_2026_season_player_props(api_key)
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def _cached_nfl_player_catalog(api_key: str | None):
+    return load_nfl_player_catalog(api_key)
+
+
+def _sportwizzard_key() -> str | None:
+    try:
+        value = st.secrets.get("SPORTWIZZARD_API_KEY")
+        return str(value).strip() if value else None
+    except Exception:
+        return None
+
 
 with st.sidebar:
     st.header("Fantasy settings")
@@ -21,7 +46,8 @@ with st.sidebar:
         4, 16, 8,
         disabled=outcome_label == "Season total",
     )
-    st.caption("The 2026 season is excluded until complete.")
+    st.caption("Historical rankings exclude 2026 until the season is complete.")
+    st.caption("2026 betting lines are shown separately as a live market overlay.")
 
 try:
     weekly = load_weekly()
@@ -93,6 +119,134 @@ with tab1:
             )
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(yearly, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.markdown("#### 2026 sportsbook expectation")
+            st.write(
+                "Compare this historical threshold with current **regular-season player total** lines. "
+                "The consensus line is the median main line across available sportsbooks."
+            )
+
+            target_choice = st.radio(
+                "Compare 2026 market lines with",
+                ["80% threshold", "Typical yearly floor", "Historical minimum"],
+                horizontal=True,
+                key=f"market_target_{position}_{metric}_{top_n}",
+            )
+            target_map = {
+                "80% threshold": summary["threshold_80"],
+                "Typical yearly floor": summary["typical_yearly_floor"],
+                "Historical minimum": summary["historical_min"],
+            }
+            market_target = float(target_map[target_choice])
+
+            if not metric_supported(metric):
+                st.info(
+                    f"No direct season-long sportsbook market is mapped to "
+                    f"{LABELS.get(metric, metric.replace('_', ' ').title())}. "
+                    "The historical analysis remains valid, but the app will not invent a betting proxy for this stat."
+                )
+            else:
+                api_key = _sportwizzard_key()
+                try:
+                    with st.spinner("Loading current 2026 season lines…"):
+                        season_odds, market_meta = _cached_2026_props(api_key)
+                        player_catalog = _cached_nfl_player_catalog(api_key)
+                except Exception as e:
+                    st.warning(
+                        "Current season betting lines could not be loaded. "
+                        "For reliable deployed access, add SPORTWIZZARD_API_KEY to Streamlit secrets."
+                    )
+                    st.caption(str(e))
+                else:
+                    comparison = consensus_for_threshold(
+                        season_odds,
+                        metric=metric,
+                        position=position,
+                        target=market_target,
+                        season_history=season,
+                        player_catalog=player_catalog,
+                    )
+                    if comparison.empty:
+                        st.info(
+                            "No active 2026 regular-season player-total market is available for this stat/position "
+                            "from the current provider. Sportsbooks do not post every stat as a season future."
+                        )
+                    else:
+                        clears = int(comparison["Expectation"].eq("Likely clears").sum())
+                        borderline = int(comparison["Expectation"].eq("Borderline").sum())
+                        below = int(comparison["Expectation"].eq("Likely below").sum())
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Market target", fmt(market_target))
+                        m2.metric("Likely clears", clears)
+                        m3.metric("Borderline", borderline)
+                        m4.metric("Likely below", below)
+
+                        display = comparison.copy()
+                        display["Market line"] = display["Market line"].round(1)
+                        display["Target"] = display["Target"].round(1)
+                        display["Vs target"] = display["Vs target"].round(1)
+                        display["Line range"] = display.apply(
+                            lambda r: f"{r['Low line']:,.1f}–{r['High line']:,.1f}", axis=1
+                        )
+                        display["Over probability"] = (
+                            display["Over probability"] * 100
+                        ).round(1)
+                        display["Updated"] = display["Updated"].dt.strftime("%Y-%m-%d %H:%M UTC")
+
+                        st.dataframe(
+                            display[
+                                [
+                                    "Player",
+                                    "Position",
+                                    "Expectation",
+                                    "Market line",
+                                    "Target",
+                                    "Vs target",
+                                    "Over probability",
+                                    "Books",
+                                    "Line range",
+                                    "Updated",
+                                ]
+                            ],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Over probability": st.column_config.NumberColumn(
+                                    "No-vig over %", format="%.1f%%"
+                                ),
+                            },
+                        )
+
+                        chart_rows = comparison.head(30).sort_values("Market line")
+                        market_fig = px.scatter(
+                            chart_rows,
+                            x="Market line",
+                            y="Player",
+                            color="Expectation",
+                            hover_data=["Books", "Low line", "High line"],
+                            labels={"Market line": f"2026 {LABELS.get(metric, metric)} line"},
+                        )
+                        market_fig.add_vline(
+                            x=market_target,
+                            line_dash="dash",
+                            annotation_text=target_choice,
+                        )
+                        st.plotly_chart(market_fig, use_container_width=True)
+
+                        freshest = comparison["Updated"].dropna()
+                        if len(freshest):
+                            st.caption(
+                                "Latest included line update: "
+                                f"{freshest.max().strftime('%Y-%m-%d %H:%M UTC')}. "
+                                "“Likely clears” means the median sportsbook line is materially above the selected "
+                                "historical target; it is a market expectation, not a guarantee or betting recommendation."
+                            )
+                        elif market_meta:
+                            st.caption(
+                                "Lines are current provider data. “Likely clears” compares the median sportsbook "
+                                "line with the selected historical target; it is not a guarantee or betting recommendation."
+                            )
 
 with tab2:
     st.subheader("What Matters?")
@@ -250,7 +404,10 @@ with tab4:
 
 with st.expander("Methodology and caveats"):
     st.markdown("""
-- **Window:** 2016–2025 regular seasons.
+- **Historical window:** 2016–2025 regular seasons.
+- **2026 market overlay:** current regular-season player total lines are kept separate from the completed-season historical dataset.
+- **Sportsbook consensus:** median main line across available books; the line range shows cross-book disagreement.
+- **Market expectation:** “Likely clears” / “Likely below” compares the consensus line to the selected historical threshold. This is not a probability model, guarantee, or recommendation to wager.
 - **Top-N ranks:** recalculated separately within each season and position using the selected fantasy scoring preset.
 - **PPG mode:** applies the minimum-games filter before ranking.
 - **Thresholds:** a minimum is descriptive, not sufficient. The hit-rate statistic shows how many non-elite players also clear the same volume threshold.
