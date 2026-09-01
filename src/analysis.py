@@ -17,6 +17,8 @@ LABELS = {
     "rushing_yards": "Rushing yards",
     "rushing_tds": "Rushing TDs",
     "total_yards": "Total yards",
+    "qb_total_yards": "Passing + rushing yards",
+    "qb_total_tds": "Passing + rushing TDs",
     "carry_share": "Carry share",
     "opportunities": "Carries + targets",
     "yards_per_carry": "Yards / carry",
@@ -35,10 +37,10 @@ LABELS = {
 
 POSITION_CANDIDATES = {
     "QB": [
-        "attempts", "completions", "passing_yards", "passing_tds",
-        "passing_interceptions", "passing_air_yards", "passing_epa",
-        "passing_cpoe", "yards_per_attempt", "carries", "rushing_yards",
-        "rushing_tds",
+        "qb_total_yards", "qb_total_tds", "attempts", "completions",
+        "passing_yards", "passing_tds", "passing_interceptions",
+        "passing_air_yards", "passing_epa", "passing_cpoe",
+        "yards_per_attempt", "carries", "rushing_yards", "rushing_tds",
     ],
     "RB": [
         "opportunities", "total_yards", "carries", "targets", "carry_share", "target_share",
@@ -57,7 +59,23 @@ POSITION_CANDIDATES = {
     ],
 }
 
+
+def _ensure_derived_metrics(df: pd.DataFrame) -> None:
+    """Add composite metrics used by the analysis views without altering source stats."""
+    if {"passing_yards", "rushing_yards"}.issubset(df.columns) and "qb_total_yards" not in df.columns:
+        df["qb_total_yards"] = (
+            pd.to_numeric(df["passing_yards"], errors="coerce").fillna(0)
+            + pd.to_numeric(df["rushing_yards"], errors="coerce").fillna(0)
+        )
+    if {"passing_tds", "rushing_tds"}.issubset(df.columns) and "qb_total_tds" not in df.columns:
+        df["qb_total_tds"] = (
+            pd.to_numeric(df["passing_tds"], errors="coerce").fillna(0)
+            + pd.to_numeric(df["rushing_tds"], errors="coerce").fillna(0)
+        )
+
+
 def available_metrics(df: pd.DataFrame, position: str) -> list[str]:
+    _ensure_derived_metrics(df)
     base = [m for m in POSITION_CANDIDATES.get(position, []) if m in df.columns]
     prefixes = {
         "QB": ("ngs_passing_", "ngs_rushing_"),
@@ -71,7 +89,9 @@ def available_metrics(df: pd.DataFrame, position: str) -> list[str]:
     ]
     return base + sorted(advanced)
 
+
 def rank_frame(df: pd.DataFrame, position: str, outcome: str, min_games: int) -> pd.DataFrame:
+    _ensure_derived_metrics(df)
     x = df[df["position"].eq(position)].copy()
     if outcome == "fantasy_ppg":
         x = x[x["games"].ge(min_games)]
@@ -82,6 +102,7 @@ def rank_frame(df: pd.DataFrame, position: str, outcome: str, min_games: int) ->
     )
     return x
 
+
 def threshold_summary(
     df: pd.DataFrame,
     position: str,
@@ -90,6 +111,7 @@ def threshold_summary(
     top_n: int,
     min_games: int,
 ):
+    _ensure_derived_metrics(df)
     x = rank_frame(df, position, outcome, min_games)
     x = x[pd.to_numeric(x[metric], errors="coerce").notna()].copy()
     qualifiers = x[x["position_rank"].le(top_n)].copy()
@@ -121,6 +143,7 @@ def threshold_summary(
     }
     return yearly, summary
 
+
 def importance_table(
     df: pd.DataFrame,
     position: str,
@@ -128,6 +151,7 @@ def importance_table(
     mode: str,
     min_games: int,
 ) -> pd.DataFrame:
+    _ensure_derived_metrics(df)
     metrics = available_metrics(df, position)
     x = df[df["position"].eq(position)].copy()
     if outcome == "fantasy_ppg":
