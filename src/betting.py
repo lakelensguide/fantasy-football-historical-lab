@@ -19,6 +19,7 @@ SUPPORTED_METRICS = {
     "carries",
     "rushing_yards",
     "rushing_tds",
+    "total_yards",
     "targets",
     "receptions",
     "receiving_yards",
@@ -125,6 +126,13 @@ def _subtype_mask(subtypes: pd.Series, metric: str) -> pd.Series:
         return has("PASS", "INTERCEPTION")
     if metric == "rushing_yards":
         return has("RUSH") & yards & ~s.str.contains("PASS", regex=False) & ~s.str.contains("RECEIV", regex=False)
+    if metric == "total_yards":
+        receiving_token = (
+            s.str.contains("RECEIV", regex=False)
+            | s.str.contains("RECEPTION", regex=False)
+            | s.str.contains("_REC_", regex=False)
+        )
+        return has("RUSH") & receiving_token & yards & ~s.str.contains("PASS", regex=False)
     if metric == "carries":
         return has("RUSH", "ATTEMPT")
     if metric == "rushing_tds":
