@@ -13,7 +13,7 @@ A Streamlit dashboard for exploring the 10 completed NFL seasons from 2016 throu
 
 ## Data
 
-Primary source: nflverse player stats from the `stats_player` GitHub release, using the current season-specific weekly parquet files and aggregating regular-season results inside the app.
+Primary source: nflverse player stats from the `stats_player` GitHub release, using season-specific weekly parquet files and aggregating regular-season results inside the app.
 
 Optional enrichment: nflverse NFL Next Gen Stats for passing, rushing, and receiving, available from 2016 onward.
 
@@ -22,14 +22,27 @@ The app excludes the incomplete 2026 season until it is complete.
 ## Run locally
 
 ```bash
-uv sync
-uv run streamlit run streamlit_app.py
+python -m venv .venv
+# Activate .venv, then:
+pip install -r requirements.txt
+streamlit run streamlit_app.py
 ```
 
 No API keys or secrets are required for the public nflverse data used by this version.
+
+## Streamlit Community Cloud
+
+The deployed app should use:
+
+- Branch: `main`
+- Entry point: `streamlit_app.py`
+- Python: 3.12 (set by `.python-version`)
+- Dependencies: `requirements.txt`
+
+Commits to `main` are picked up by the existing Streamlit Community Cloud deployment created from this repository.
 
 ## Methodology notes
 
 A literal historical minimum can be distorted by an unusual season, so the Threshold Explorer also reports a typical yearly floor and an 80% threshold. The hit-rate calculation answers the inverse question: among players who clear that stat threshold, how often did they actually achieve the selected fantasy finish?
 
-The "What Matters?" view deliberately separates same-season association from next-season signal. Importance is based on median season-by-season rank correlation with a consistency adjustment; it is descriptive and should not be interpreted as causal.
+The **What Matters?** view deliberately separates same-season association from next-season signal. Importance is based on median season-by-season rank correlation with a consistency adjustment; it is descriptive and should not be interpreted as causal.
